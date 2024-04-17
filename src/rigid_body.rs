@@ -96,6 +96,7 @@ fn center_shape(shape: &dyn Shape, mass_properties: MassProperties) -> (impl Sha
     }
 }
 
+#[derive(Debug)]
 pub struct RigidBodyState {
     pub position: Vector3<Real>,
     pub velocity: Vector3<Real>

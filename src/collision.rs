@@ -3,9 +3,9 @@ use nalgebra::{RowDVector, Vector2, Rotation2};
 use parry2d_f64::math::Real;
 use parry2d_f64::query::{ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher, TrackedContact};
 use parry2d_f64::utils::IsometryOpt;
-use crate::rigid_body::RigidBody;
+use crate::rigid_body::{RigidBody, RigidBodyState};
 use crate::solver::Index;
-use crate::utils::COLLISION_EPS;
+use crate::utils::{COLLISION_EPS, CONTACT_VELOCITY_EPS};
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum CollisionType {
@@ -32,7 +32,10 @@ impl Collision {
         let velocity_2: Vector2<Real> = rigid_body_2.velocity.xy() + rigid_body_2.velocity.z * (direct_orthogonal * self.point_2);
 
         let relative_velocity_21 = (velocity_2 - velocity_1).dot(&self.normal_12);
-        if relative_velocity_21 < 0.0 {
+        if relative_velocity_21.abs() < CONTACT_VELOCITY_EPS {
+            self.kind = CollisionType::Contact;
+        }
+        else if relative_velocity_21 < 0.0 {
             self.kind = CollisionType::Penetration;
         }
         else {
@@ -54,6 +57,14 @@ impl Collision {
         row[3 * self.index_2] = self.normal_12.x;
         row[3 * self.index_2 + 1] = self.normal_12.y;
         row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&self.normal_12);
+
+        row
+    }
+
+    pub fn compute_jacobian_derivative(&self, states: &Vec<RigidBodyState>) -> RowDVector<Real> {
+        let mut row = RowDVector::from(vec![0.0; 3 * states.len()]);
+        row[3 * self.index_1 + 2] = states[self.index_1].velocity.z * self.point_1.dot(&self.normal_12);
+        row[3 * self.index_2 + 2] = -states[self.index_2].velocity.z * self.point_2.dot(&self.normal_12);
 
         row
     }
@@ -89,8 +100,10 @@ pub fn compute_contact(index_1: Index, index_2: Index, rigid_bodies: &Vec<RigidB
 
         let relative_velocity_21 = (velocity_2 - velocity_1).dot(&normal_12);
         let kind;
-        if relative_velocity_21 < 0.0 {
-            println!("Velocity : {relative_velocity_21}");
+        if relative_velocity_21.abs() < CONTACT_VELOCITY_EPS {
+            kind = CollisionType::Contact;
+        }
+        else if relative_velocity_21 < 0.0 {
             kind = CollisionType::Penetration;
         }
         else {

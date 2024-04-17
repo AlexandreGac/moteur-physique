@@ -19,14 +19,30 @@ impl Solver {
 
     pub fn simulate(&mut self) {
         let mut collisions = self.find_collisions();
+        println!("{:?}", collisions.iter().cloned().map(|x| x.kind).collect::<Vec<_>>());
         loop {
             let penetrations = collisions.iter().cloned()
                 .filter(|collision| collision.kind == CollisionType::Penetration)
                 .collect::<Vec<_>>();
 
-            if penetrations.is_empty() { break }
+            let contacts = collisions.iter()
+                .filter(|collision| collision.kind == CollisionType::Contact)
+                .collect::<Vec<_>>();
 
-            let impulses = self.compute_impulses(penetrations);
+            // Logique un peu moche ici
+            if penetrations.is_empty() {
+                if contacts.is_empty() { break }
+                else {
+                    let impulses = self.compute_impulses(&contacts, penetrations);
+                    for i in 0..self.world.len() {
+                        self.world[i].apply_impulse(impulses[i]);
+                    }
+
+                    break
+                }
+            }
+
+            let impulses = self.compute_impulses(&contacts, penetrations);
             for i in 0..self.world.len() {
                 self.world[i].apply_impulse(impulses[i]);
             }
@@ -35,44 +51,51 @@ impl Solver {
             }
         }
 
-        self.runge_kutta_4();
+        let mut contacts = collisions.into_iter()
+            .filter(|collision| collision.kind == CollisionType::Contact)
+            .collect::<Vec<_>>();
+        self.runge_kutta_4(&mut contacts);
         println!("Énergie système : {}", self.compute_energy());
     }
 
-    fn runge_kutta_4(&mut self) {
-        let states_1: Vec<RigidBodyState> = self.world.iter()
-            .map(|x| x.get_state())
-            .collect();
-        let forces_1 = self.compute_forces(&states_1);
+    fn runge_kutta_4(&mut self, contacts: &mut Vec<Collision>) {
+        loop {
+            let states_1: Vec<RigidBodyState> = self.world.iter()
+                .map(|x| x.get_state())
+                .collect();
+            let Some(forces_1) = self.compute_forces(&states_1, contacts) else { continue };
 
-        let states_2: Vec<RigidBodyState> = states_1.iter().enumerate()
-            .map(|(i, x)| x.apply_physics_step(
-                states_1[i].velocity,
-                forces_1[i].component_mul(&self.world[i].inv_mass),
-                self.dt / 2.0
-            )).collect();
-        let forces_2 = self.compute_forces(&states_2);
+            let states_2: Vec<RigidBodyState> = states_1.iter().enumerate()
+                .map(|(i, x)| x.apply_physics_step(
+                    states_1[i].velocity,
+                    forces_1[i].component_mul(&self.world[i].inv_mass),
+                    self.dt / 2.0
+                )).collect();
+            let Some(forces_2) = self.compute_forces(&states_2, contacts) else { continue };
 
-        let states_3: Vec<RigidBodyState> = states_1.iter().enumerate()
-            .map(|(i, x)| x.apply_physics_step(
-                states_2[i].velocity,
-                forces_2[i].component_mul(&self.world[i].inv_mass),
-                self.dt / 2.0
-            )).collect();
-        let forces_3 = self.compute_forces(&states_3);
+            let states_3: Vec<RigidBodyState> = states_1.iter().enumerate()
+                .map(|(i, x)| x.apply_physics_step(
+                    states_2[i].velocity,
+                    forces_2[i].component_mul(&self.world[i].inv_mass),
+                    self.dt / 2.0
+                )).collect();
+            let Some(forces_3) = self.compute_forces(&states_3, contacts) else { continue };
 
-        let states_4: Vec<RigidBodyState> = states_1.iter().enumerate()
-            .map(|(i, x)| x.apply_physics_step(
-                states_3[i].velocity,
-                forces_3[i].component_mul(&self.world[i].inv_mass),
-                self.dt
-            )).collect();
-        let forces_4 = self.compute_forces(&states_4);
+            let states_4: Vec<RigidBodyState> = states_1.iter().enumerate()
+                .map(|(i, x)| x.apply_physics_step(
+                    states_3[i].velocity,
+                    forces_3[i].component_mul(&self.world[i].inv_mass),
+                    self.dt
+                )).collect();
+            let Some(forces_4) = self.compute_forces(&states_4, contacts) else { continue };
 
-        for i in 0..self.world.len() {
-            let velocity = states_1[i].velocity + 2.0 * (states_2[i].velocity + states_3[i].velocity) + states_4[i].velocity;
-            let acceleration = self.world[i].inv_mass.component_mul(&(forces_1[i] + 2.0 * (forces_2[i] + forces_3[i]) + forces_4[i]));
-            self.world[i].apply_physics(velocity, acceleration, self.dt / 6.0);
+            for i in 0..self.world.len() {
+                let velocity = states_1[i].velocity + 2.0 * (states_2[i].velocity + states_3[i].velocity) + states_4[i].velocity;
+                let acceleration = self.world[i].inv_mass.component_mul(&(forces_1[i] + 2.0 * (forces_2[i] + forces_3[i]) + forces_4[i]));
+                self.world[i].apply_physics(velocity, acceleration, self.dt / 6.0);
+            }
+
+            break
         }
     }
 
@@ -88,7 +111,7 @@ impl Solver {
         contacts.into_iter().flatten().collect()
     }
 
-    fn compute_impulses(&self, mut penetrations: Vec<Collision>) -> Vec<Vector3<Real>> {
+    fn compute_impulses(&self, contacts: &Vec<&Collision>, mut penetrations: Vec<Collision>) -> Vec<Vector3<Real>> {
         let states: Vec<RigidBodyState> = self.world.iter().map(|x| x.get_state()).collect();
         loop {
             let velocities: DVector<Real> = DVector::<Real>::from(
@@ -102,6 +125,9 @@ impl Solver {
                     self.constraints.iter()
                         .map(|x| x.compute_jacobian(&states))
                         .collect::<Vec<_>>(),
+                    contacts.iter()
+                        .map(|x| x.compute_jacobian(&self.world))
+                        .collect::<Vec<_>>(),
                     penetrations.iter()
                         .map(|x| x.compute_jacobian(&self.world))
                         .collect::<Vec<_>>()
@@ -110,7 +136,7 @@ impl Solver {
             );
             let bias: DMatrix<Real> = DMatrix::<Real>::from_diagonal(
                 &vec![
-                    vec![1.0; self.constraints.len()],
+                    vec![1.0; self.constraints.len() + contacts.len()],
                     penetrations.iter()
                         .map(|x| 1.0 + x.get_restitution_coefficient())
                         .collect::<Vec<_>>()
@@ -124,7 +150,7 @@ impl Solver {
 
             let mut restart = false;
             for i in (0..penetrations.len()).rev() {
-                if lagrangian[self.constraints.len() + i] < 0.0 {
+                if lagrangian[self.constraints.len() + contacts.len() + i] < 0.0 {
                     penetrations.remove(i);
                     restart = true;
                 }
@@ -147,7 +173,7 @@ impl Solver {
         }
     }
 
-    fn compute_forces(&self, states: &Vec<RigidBodyState>) -> Vec<Vector3<Real>> {
+    fn compute_forces(&self, states: &Vec<RigidBodyState>, contacts: &mut Vec<Collision>) -> Option<Vec<Vector3<Real>>> {
         let mut forces = vec![Vector3::<Real>::new(0.0, 0.0, 0.0); states.len()];
         for i in 0..states.len() {
             let inv_mass = self.world[i].inv_mass.x;
@@ -156,7 +182,7 @@ impl Solver {
             }
         }
 
-        if self.constraints.len() == 0 { return forces }
+        if self.constraints.len() == 0 && contacts.len() == 0 { return Some(forces) }
 
         let velocities: DVector<Real> = DVector::<Real>::from(
             states.iter()
@@ -171,22 +197,42 @@ impl Solver {
                 .collect::<Vec<_>>()
         );
         let jacobian: DMatrix<Real> = DMatrix::<Real>::from_rows(
-            self.constraints.iter()
-                .map(|x| x.compute_jacobian(states))
-                .collect::<Vec<_>>()
-                .as_slice()
+            vec![
+                self.constraints.iter()
+                    .map(|x| x.compute_jacobian(&states))
+                    .collect::<Vec<_>>(),
+                contacts.iter()
+                    .map(|x| x.compute_jacobian(&self.world))
+                    .collect::<Vec<_>>()
+            ]
+                .into_iter().flatten().collect::<Vec<_>>().as_slice()
         );
         let jacobian_derivative: DMatrix<Real> = DMatrix::<Real>::from_rows(
-            self.constraints.iter()
-                .map(|x| x.compute_jacobian_derivative(states))
-                .collect::<Vec<_>>()
-                .as_slice()
+            vec![
+                self.constraints.iter()
+                    .map(|x| x.compute_jacobian_derivative(&states))
+                    .collect::<Vec<_>>(),
+                contacts.iter()
+                    .map(|x| x.compute_jacobian_derivative(&states))
+                    .collect::<Vec<_>>()
+            ]
+                .into_iter().flatten().collect::<Vec<_>>().as_slice()
         );
 
         let a = jacobian.clone() * &self.inverse_mass * jacobian.transpose();
         let b = -jacobian_derivative * velocities
             - jacobian.clone() * &self.inverse_mass * external_forces;
-        let lagrangian = a.lu().solve(&b).expect("La résolution a échoué !");
+        let lagrangian = a.svd(true, true).solve(&b, 1e-15).expect("La résolution a échoué !");
+
+        let mut restart = false;
+        for i in (0..contacts.len()).rev() {
+            if lagrangian[self.constraints.len() + i] < 0.0 {
+                contacts.remove(i);
+                restart = true;
+            }
+        }
+        if restart { return None; }
+
         let constraint_forces = jacobian.transpose() * lagrangian;
 
         let length = states.len();
@@ -199,7 +245,7 @@ impl Solver {
             ));
         }
 
-        result_forces
+        Some(result_forces)
     }
 
     pub fn compute_energy(&self) -> Real {
