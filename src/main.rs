@@ -2,44 +2,57 @@ mod rigid_body;
 mod solver;
 mod collision;
 mod constraints;
+mod utils;
 
-use nalgebra::Point2;
-use parry2d::shape::{ConvexPolygon, Shape};
+use nalgebra::{Point2, Vector2};
+use parry2d_f64::math::Real;
+use parry2d_f64::shape::{ConvexPolygon, Shape};
 use crate::rigid_body::RigidBody;
-use crate::solver::SolverBuilder;
+use crate::solver::{Solver, SolverBuilder};
+use piston_window::*;
+use piston_window::math::Scalar;
+use crate::constraints::Constraint;
 
 fn main() {
-    let points1 = vec![
-        Point2::new(0.0, 0.0),
-        Point2::new(1.0, 0.0),
-        Point2::new(1.0, 1.0),
-        Point2::new(0.0, 1.0)
+    let points_0 = vec![
+        Point2::new(-5.5, 4.5),
+        Point2::new(-4.5, 4.5),
+        Point2::new(-4.5, 5.5),
+        Point2::new(-5.5, 5.5)
     ];
-    let polygon1 = ConvexPolygon::from_convex_polyline(points1).unwrap();
-    let rb1 = RigidBody::new(polygon1, 1.0);
+    let polygon_0 = ConvexPolygon::from_convex_polyline(points_0).unwrap();
+    let rb_0 = RigidBody::new(polygon_0, 1.0);
 
-    let points2 = vec![
-        Point2::new(0.5, 0.9),
-        Point2::new(1.0, 1.9),
-        Point2::new(0.0, 1.9)
+    let points_1 = vec![
+        Point2::new(-5.5, 0.5),
+        Point2::new(5.5, 0.5),
+        Point2::new(5.5, 1.5),
+        Point2::new(-5.5, 2.5)
     ];
-    let polygon2 = ConvexPolygon::from_convex_polyline(points2).unwrap();
-    let rb2 = RigidBody::new(polygon2, 1.0);
+    let polygon_1 = ConvexPolygon::from_convex_polyline(points_1).unwrap();
+    let rb_1 = RigidBody::new(polygon_1, Real::INFINITY);
 
-    let points3 = vec![
-        Point2::new(0.8, 0.8),
-        Point2::new(1.8, 0.8),
-        Point2::new(1.8, 1.8),
-        Point2::new(0.8, 1.8)
-    ];
-    let polygon3 = ConvexPolygon::from_convex_polyline(points3).unwrap();
-    let rb3 = RigidBody::new(polygon3, 1.0);
-
-    let mut solver = SolverBuilder::new()
-        .add_rigid_body(rb1)
-        .add_rigid_body(rb2)
-        .add_rigid_body(rb3)
+    let solver = SolverBuilder::new()
+        .add_rigid_body(rb_0)
+        .add_rigid_body(rb_1)
         .build();
 
-    solver.simulate();
+    simulation_loop(solver);
+}
+
+fn simulation_loop(mut solver: Solver) {
+    let (width, height) = (1200, 700);
+    let mut window: PistonWindow = WindowSettings::new("Moteur physique", [width, height])
+        .vsync(true)
+        .exit_on_esc(true)
+        .build()
+        .unwrap();
+
+    while let Some(event) = window.next() {
+        solver.simulate();
+        window.draw_2d(&event, |context, graphics, _device| {
+            clear([0.4; 4], graphics);
+            solver.display(context, graphics, width as Scalar, height as Scalar);
+        });
+    }
 }

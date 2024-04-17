@@ -1,8 +1,11 @@
 use nalgebra::{Isometry2, Point2, Vector3};
-use parry2d::shape::{Shape, ShapeType};
-use parry2d::mass_properties::MassProperties;
-use parry2d::math::Real;
-use parry2d::shape::ConvexPolygon;
+use parry2d_f64::shape::{Shape, ShapeType};
+use parry2d_f64::mass_properties::MassProperties;
+use parry2d_f64::math::Real;
+use parry2d_f64::shape::ConvexPolygon;
+use piston_window::{Context, Graphics, polygon};
+use piston_window::math::Scalar;
+use crate::utils::GRAVITATIONAL_ACCELERATION;
 
 pub struct RigidBody {
     pub geometry: Box<dyn Shape>,
@@ -13,12 +16,12 @@ pub struct RigidBody {
 }
 
 impl RigidBody {
-    pub fn new(shape: impl Shape, density: f32) -> Self {
+    pub fn new(shape: impl Shape, density: Real) -> Self {
         let mass_properties = shape.mass_properties(density);
         let (polygon, transform) = center_shape(&shape, mass_properties);
         RigidBody {
             geometry: Box::new(polygon),
-            position: Vector3::new(0.0, 0.0, 0.0),
+            position: Vector3::new(transform.translation.x, transform.translation.y, 0.0),
             velocity: Vector3::new(0.0, 0.0, 0.0),
             inv_mass: Vector3::new(mass_properties.inv_mass, mass_properties.inv_mass, mass_properties.inv_principal_inertia_sqrt),
             transform,
@@ -46,12 +49,40 @@ impl RigidBody {
         self.geometry.as_ref()
     }
 
-    pub fn transform(&self) -> &Isometry2<f32> {
+    pub fn transform(&self) -> &Isometry2<Real> {
         &self.transform
+    }
+
+    pub fn get_energy(&self) -> Real {
+        let kinetic_energy = Vector3::new(0.5, 0.5, 0.5)
+            .component_div(&self.inv_mass)
+            .component_mul(&self.velocity)
+            .component_mul(&self.velocity)
+            .sum();
+        let potential_energy = GRAVITATIONAL_ACCELERATION / self.inv_mass.x * self.position.y;
+
+        kinetic_energy + potential_energy
+    }
+
+    pub fn display(&self, context: Context, graphics: &mut impl Graphics, width: Scalar, height: Scalar) {
+        polygon(
+            [1.0, 0.0, 0.0, 0.5],
+            self.geometry
+                .as_convex_polygon()
+                .expect("Impossible de dessiner autre chose qu'un polygone !")
+                .points()
+                .iter()
+                .map(|v| self.transform * v)
+                .map(|v| [width / 2.0 + (v.x * 100.0) as Scalar, height - (v.y * 100.0) as Scalar])
+                .collect::<Vec<_>>()
+                .as_slice(),
+            context.transform,
+            graphics
+        );
     }
 }
 
-fn center_shape(shape: &dyn Shape, mass_properties: MassProperties) -> (impl Shape, Isometry2<f32>) {
+fn center_shape(shape: &dyn Shape, mass_properties: MassProperties) -> (impl Shape, Isometry2<Real>) {
     match shape.shape_type() {
         ShapeType::ConvexPolygon => {
             let convex_polygon = shape.as_convex_polygon().unwrap();
@@ -66,8 +97,8 @@ fn center_shape(shape: &dyn Shape, mass_properties: MassProperties) -> (impl Sha
 }
 
 pub struct RigidBodyState {
-    pub position: Vector3<f32>,
-    pub velocity: Vector3<f32>
+    pub position: Vector3<Real>,
+    pub velocity: Vector3<Real>
 }
 
 impl RigidBodyState {

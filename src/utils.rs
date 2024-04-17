@@ -1,0 +1,2 @@
+pub const GRAVITATIONAL_ACCELERATION: f64 = 9.81;
+pub const COLLISION_EPS: f64 = 1e-3;
