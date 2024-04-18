@@ -2,7 +2,8 @@ use std::f64::consts::FRAC_PI_2;
 use nalgebra::{RowDVector, Vector2, Rotation2};
 use parry2d_f64::math::Real;
 use parry2d_f64::query::{ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher, TrackedContact};
-use parry2d_f64::utils::IsometryOpt;
+use piston_window::math::Scalar;
+use piston_window::{Context, Graphics, rectangle};
 use crate::rigid_body::{RigidBody, RigidBodyState};
 use crate::solver::Index;
 use crate::utils::{COLLISION_EPS, CONTACT_VELOCITY_EPS};
@@ -68,6 +69,42 @@ impl Collision {
 
         row
     }
+
+    pub fn display(&self, rigid_bodies: &Vec<RigidBody>, context: Context, graphics: &mut impl Graphics, width: Scalar, height: Scalar) {
+        let rigid_body = &rigid_bodies[self.index_1];
+        let color = match self.kind {
+            CollisionType::Penetration => [1.0, 0.0, 1.0, 0.5],
+            CollisionType::Separation => [0.0, 1.0, 0.0, 0.5],
+            CollisionType::Contact => [0.0, 0.0, 1.0, 0.5],
+        };
+        let point = Vector2::new(
+            width as Real / 2.0 + (rigid_body.position.x + self.point_1.x) * 100.0,
+            height as Real - (rigid_body.position.y + self.point_1.y) * 100.0
+        );
+        rectangle(
+            color,
+            [(point.x - 5.0) as Scalar, (point.y - 5.0) as Scalar, 10.0, 10.0],
+            context.transform,
+            graphics
+        );
+
+        let rigid_body = &rigid_bodies[self.index_2];
+        let color = match self.kind {
+            CollisionType::Penetration => [1.0, 0.0, 1.0, 0.5],
+            CollisionType::Separation => [0.0, 1.0, 0.0, 0.5],
+            CollisionType::Contact => [0.0, 0.0, 1.0, 0.5],
+        };
+        let point = Vector2::new(
+            width as Real / 2.0 + (rigid_body.position.x + self.point_2.x) * 100.0,
+            height as Real - (rigid_body.position.y + self.point_2.y) * 100.0
+        );
+        rectangle(
+            color,
+            [(point.x - 5.0) as Scalar, (point.y - 5.0) as Scalar, 10.0, 10.0],
+            context.transform,
+            graphics
+        );
+    }
 }
 
 pub fn compute_contact(index_1: Index, index_2: Index, rigid_bodies: &Vec<RigidBody>) -> Vec<Collision> {
@@ -89,9 +126,10 @@ pub fn compute_contact(index_1: Index, index_2: Index, rigid_bodies: &Vec<RigidB
     };
     let result = find_deepest_contacts(contact);
 
-    result.iter().map(|tracked_contact| {let direct_orthogonal = Rotation2::new(FRAC_PI_2);
-        let rotation_1 = contact.subshape_pos1.prepend_to(rigid_body_1.transform());
-        let rotation_2 = contact.subshape_pos2.prepend_to(rigid_body_2.transform());
+    result.iter().map(|tracked_contact| {
+        let direct_orthogonal = Rotation2::new(FRAC_PI_2);
+        let rotation_1 = rigid_body_1.transform().rotation;
+        let rotation_2 = rigid_body_2.transform().rotation;
         let point_1: Vector2<Real> = rotation_1 * tracked_contact.local_p1.coords;
         let point_2: Vector2<Real> = rotation_2 * tracked_contact.local_p2.coords;
         let normal_12: Vector2<Real> = rotation_1 * contact.local_n1;

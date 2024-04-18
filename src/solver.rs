@@ -12,14 +12,16 @@ pub struct Solver {
     dt: Real,
     world: Vec<RigidBody>,
     constraints: Vec<Constraint>,
+    collision_infos: Vec<Collision>,
     inverse_mass: DMatrix<Real>
 }
 
 impl Solver {
 
-    pub fn simulate(&mut self) {
+    pub fn simulate(&mut self) -> bool {
         let mut collisions = self.find_collisions();
-        println!("{:?}", collisions.iter().cloned().map(|x| x.kind).collect::<Vec<_>>());
+        self.collision_infos = collisions.clone();
+        let mut stop = false;
         loop {
             let penetrations = collisions.iter().cloned()
                 .filter(|collision| collision.kind == CollisionType::Penetration)
@@ -29,26 +31,24 @@ impl Solver {
                 .filter(|collision| collision.kind == CollisionType::Contact)
                 .collect::<Vec<_>>();
 
-            // Logique un peu moche ici
-            if penetrations.is_empty() {
-                if contacts.is_empty() { break }
-                else {
-                    let impulses = self.compute_impulses(&contacts, penetrations);
-                    for i in 0..self.world.len() {
-                        self.world[i].apply_impulse(impulses[i]);
-                    }
-
-                    break
+            if !contacts.is_empty() {
+                let impulses = self.compute_impulses(&contacts, vec![]);
+                for i in 0..self.world.len() {
+                    self.world[i].apply_impulse(impulses[i]);
                 }
             }
 
-            let impulses = self.compute_impulses(&contacts, penetrations);
+            if penetrations.is_empty() { break }
+
+            let impulses = self.compute_impulses(&vec![], penetrations);
             for i in 0..self.world.len() {
                 self.world[i].apply_impulse(impulses[i]);
             }
             for collision in &mut collisions {
                 collision.update_collision_type(&self.world);
             }
+
+            stop = true;
         }
 
         let mut contacts = collisions.into_iter()
@@ -56,6 +56,7 @@ impl Solver {
             .collect::<Vec<_>>();
         self.runge_kutta_4(&mut contacts);
         println!("Énergie système : {}", self.compute_energy());
+        stop
     }
 
     fn runge_kutta_4(&mut self, contacts: &mut Vec<Collision>) {
@@ -255,6 +256,7 @@ impl Solver {
     pub fn display(&self, context: Context, graphics: &mut impl Graphics, width: Scalar, height: Scalar) {
         self.world.iter().for_each(|x| x.display(context, graphics, width, height));
         self.constraints.iter().for_each(|x| x.display(&self.world, context, graphics, width, height));
+        self.collision_infos.iter().for_each(|x| x.display(&self.world, context, graphics, width, height));
     }
 }
 
@@ -299,6 +301,7 @@ impl SolverBuilder {
             dt,
             world: self.world,
             constraints: self.constraints,
+            collision_infos: vec![],
             inverse_mass
         }
     }
