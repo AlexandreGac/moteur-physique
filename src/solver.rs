@@ -13,6 +13,8 @@ pub struct Solver {
     world: Vec<RigidBody>,
     constraints: Vec<Constraint>,
     collision_infos: Vec<Collision>,
+    contact_lagrangians: Vec<Real>,
+    penetration_lagrangians: Vec<Real>,
     inverse_mass: DMatrix<Real>
 }
 
@@ -23,16 +25,16 @@ impl Solver {
         self.collision_infos = collisions.clone();
         let mut stop = false;
         loop {
-            let penetrations = collisions.iter().cloned()
-                .filter(|collision| collision.kind == CollisionType::Penetration)
-                .collect::<Vec<_>>();
-
-            let contacts = collisions.iter()
+            let contacts = collisions.iter().cloned()
                 .filter(|collision| collision.kind == CollisionType::Contact)
                 .collect::<Vec<_>>();
 
+            let mut penetrations = collisions.iter().cloned()
+                .filter(|collision| collision.kind == CollisionType::Penetration)
+                .collect::<Vec<_>>();
+
             if !contacts.is_empty() {
-                let impulses = self.compute_impulses(&contacts, vec![]);
+                let impulses = self.compute_impulses(&contacts, &mut vec![], false);
                 for i in 0..self.world.len() {
                     self.world[i].apply_impulse(impulses[i]);
                 }
@@ -40,10 +42,18 @@ impl Solver {
 
             if penetrations.is_empty() { break }
 
-            let impulses = self.compute_impulses(&vec![], penetrations);
+            let impulses = self.compute_impulses(&vec![], &mut penetrations, false);
             for i in 0..self.world.len() {
                 self.world[i].apply_impulse(impulses[i]);
             }
+
+            let (mut friction_penetrations, friction_lagrangians) = collision::compute_friction_contacts(penetrations, &self.penetration_lagrangians);
+            self.penetration_lagrangians = friction_lagrangians;
+            let friction_impulses = self.compute_impulses(&vec![], &mut friction_penetrations, true);
+            for i in 0..self.world.len() {
+                self.world[i].apply_impulse(friction_impulses[i]);
+            }
+
             for collision in &mut collisions {
                 collision.update_collision_type(&self.world);
             }
@@ -55,6 +65,16 @@ impl Solver {
             .filter(|collision| collision.kind == CollisionType::Contact)
             .collect::<Vec<_>>();
         self.runge_kutta_4(&mut contacts);
+
+        if !contacts.is_empty() {
+            let (friction_contacts, friction_lagrangians) = collision::compute_friction_contacts(contacts, &self.contact_lagrangians);
+            self.contact_lagrangians = friction_lagrangians;
+            let friction_impulses = self.compute_impulses(&friction_contacts, &mut vec![], true);
+            for i in 0..self.world.len() {
+                self.world[i].apply_impulse(friction_impulses[i]);
+            }
+        }
+
         println!("Énergie système : {}", self.compute_energy());
         stop
     }
@@ -64,7 +84,7 @@ impl Solver {
             let states_1: Vec<RigidBodyState> = self.world.iter()
                 .map(|x| x.get_state())
                 .collect();
-            let Some(forces_1) = self.compute_forces(&states_1, contacts) else { continue };
+            let Some((forces_1, lagrangians_1)) = self.compute_forces(&states_1, contacts) else { continue };
 
             let states_2: Vec<RigidBodyState> = states_1.iter().enumerate()
                 .map(|(i, x)| x.apply_physics_step(
@@ -72,7 +92,7 @@ impl Solver {
                     forces_1[i].component_mul(&self.world[i].inv_mass),
                     self.dt / 2.0
                 )).collect();
-            let Some(forces_2) = self.compute_forces(&states_2, contacts) else { continue };
+            let Some((forces_2, lagrangians_2)) = self.compute_forces(&states_2, contacts) else { continue };
 
             let states_3: Vec<RigidBodyState> = states_1.iter().enumerate()
                 .map(|(i, x)| x.apply_physics_step(
@@ -80,7 +100,7 @@ impl Solver {
                     forces_2[i].component_mul(&self.world[i].inv_mass),
                     self.dt / 2.0
                 )).collect();
-            let Some(forces_3) = self.compute_forces(&states_3, contacts) else { continue };
+            let Some((forces_3, lagrangians_3)) = self.compute_forces(&states_3, contacts) else { continue };
 
             let states_4: Vec<RigidBodyState> = states_1.iter().enumerate()
                 .map(|(i, x)| x.apply_physics_step(
@@ -88,12 +108,17 @@ impl Solver {
                     forces_3[i].component_mul(&self.world[i].inv_mass),
                     self.dt
                 )).collect();
-            let Some(forces_4) = self.compute_forces(&states_4, contacts) else { continue };
+            let Some((forces_4, lagrangians_4)) = self.compute_forces(&states_4, contacts) else { continue };
 
             for i in 0..self.world.len() {
                 let velocity = states_1[i].velocity + 2.0 * (states_2[i].velocity + states_3[i].velocity) + states_4[i].velocity;
                 let acceleration = self.world[i].inv_mass.component_mul(&(forces_1[i] + 2.0 * (forces_2[i] + forces_3[i]) + forces_4[i]));
                 self.world[i].apply_physics(velocity, acceleration, self.dt / 6.0);
+            }
+
+            self.contact_lagrangians = vec![];
+            for i in 0..contacts.len() {
+                self.contact_lagrangians.push((lagrangians_1[i] + 2.0 * (lagrangians_2[i] + lagrangians_3[i]) + lagrangians_4[i]) / 6.0);
             }
 
             break
@@ -112,7 +137,7 @@ impl Solver {
         contacts.into_iter().flatten().collect()
     }
 
-    fn compute_impulses(&self, contacts: &Vec<&Collision>, mut penetrations: Vec<Collision>) -> Vec<Vector3<Real>> {
+    fn compute_impulses(&mut self, contacts: &Vec<Collision>, penetrations: &mut Vec<Collision>, friction: bool) -> Vec<Vector3<Real>> {
         let states: Vec<RigidBodyState> = self.world.iter().map(|x| x.get_state()).collect();
         loop {
             let velocities: DVector<Real> = DVector::<Real>::from(
@@ -127,19 +152,22 @@ impl Solver {
                         .map(|x| x.compute_jacobian(&states))
                         .collect::<Vec<_>>(),
                     contacts.iter()
-                        .map(|x| x.compute_jacobian(&self.world))
+                        .map(|x| x.compute_jacobian(&self.world, friction))
                         .collect::<Vec<_>>(),
                     penetrations.iter()
-                        .map(|x| x.compute_jacobian(&self.world))
+                        .map(|x| x.compute_jacobian(&self.world, friction))
                         .collect::<Vec<_>>()
                 ]
                     .into_iter().flatten().collect::<Vec<_>>().as_slice()
             );
             let bias: DMatrix<Real> = DMatrix::<Real>::from_diagonal(
                 &vec![
-                    vec![1.0; self.constraints.len() + contacts.len()],
-                    penetrations.iter()
-                        .map(|x| 1.0 + x.get_restitution_coefficient())
+                    vec![1.0; self.constraints.len()],
+                    contacts.iter().enumerate()
+                        .map(|(i, x)| 1.0 - x.get_reaction_restitution_coefficient(&self.world, friction, self.contact_lagrangians.get(i), self.dt))
+                        .collect::<Vec<_>>(),
+                    penetrations.iter().enumerate()
+                        .map(|(i, x)| 1.0 + x.get_impulse_restitution_coefficient(&self.world, friction, self.penetration_lagrangians.get(i)))
                         .collect::<Vec<_>>()
                 ]
                     .into_iter().flatten().collect::<Vec<_>>().into()
@@ -149,14 +177,21 @@ impl Solver {
             let b = -bias * jacobian.clone() * velocities;
             let lagrangian = a.svd(true, true).solve(&b, 1e-15).expect("La résolution a échoué !");
 
-            let mut restart = false;
-            for i in (0..penetrations.len()).rev() {
-                if lagrangian[self.constraints.len() + contacts.len() + i] < 0.0 {
-                    penetrations.remove(i);
-                    restart = true;
+            if !friction {
+                let mut restart = false;
+                for i in (0..penetrations.len()).rev() {
+                    if lagrangian[self.constraints.len() + contacts.len() + i] < 0.0 {
+                        penetrations.remove(i);
+                        restart = true;
+                    }
+                }
+                if restart { continue }
+
+                self.penetration_lagrangians = vec![];
+                for i in 0..penetrations.len() {
+                    self.penetration_lagrangians.push(lagrangian[self.constraints.len() + contacts.len() + i]);
                 }
             }
-            if restart { continue }
 
             let constraint_impulses = jacobian.transpose() * lagrangian;
 
@@ -174,7 +209,7 @@ impl Solver {
         }
     }
 
-    fn compute_forces(&self, states: &Vec<RigidBodyState>, contacts: &mut Vec<Collision>) -> Option<Vec<Vector3<Real>>> {
+    fn compute_forces(&mut self, states: &Vec<RigidBodyState>, contacts: &mut Vec<Collision>) -> Option<(Vec<Vector3<Real>>, Vec<Real>)> {
         let mut forces = vec![Vector3::<Real>::new(0.0, 0.0, 0.0); states.len()];
         for i in 0..states.len() {
             let inv_mass = self.world[i].inv_mass.x;
@@ -183,7 +218,7 @@ impl Solver {
             }
         }
 
-        if self.constraints.len() == 0 && contacts.len() == 0 { return Some(forces) }
+        if self.constraints.len() == 0 && contacts.len() == 0 { return Some((forces, vec![])) }
 
         let velocities: DVector<Real> = DVector::<Real>::from(
             states.iter()
@@ -203,7 +238,7 @@ impl Solver {
                     .map(|x| x.compute_jacobian(&states))
                     .collect::<Vec<_>>(),
                 contacts.iter()
-                    .map(|x| x.compute_jacobian(&self.world))
+                    .map(|x| x.compute_jacobian(&self.world, false))
                     .collect::<Vec<_>>()
             ]
                 .into_iter().flatten().collect::<Vec<_>>().as_slice()
@@ -234,6 +269,11 @@ impl Solver {
         }
         if restart { return None; }
 
+        let mut lagrangians = vec![];
+        for i in 0..contacts.len() {
+            lagrangians.push(lagrangian[self.constraints.len() + i]);
+        }
+
         let constraint_forces = jacobian.transpose() * lagrangian;
 
         let length = states.len();
@@ -246,7 +286,7 @@ impl Solver {
             ));
         }
 
-        Some(result_forces)
+        Some((result_forces, lagrangians))
     }
 
     pub fn compute_energy(&self) -> Real {
@@ -302,6 +342,8 @@ impl SolverBuilder {
             world: self.world,
             constraints: self.constraints,
             collision_infos: vec![],
+            contact_lagrangians: vec![],
+            penetration_lagrangians: vec![],
             inverse_mass
         }
     }

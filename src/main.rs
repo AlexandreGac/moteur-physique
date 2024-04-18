@@ -14,7 +14,7 @@ use piston_window::math::Scalar;
 use crate::constraints::Constraint;
 
 fn main() {
-/*
+
     let points_0 = vec![
         Point2::new(-5.5, 4.5),
         Point2::new(-4.5, 4.5),
@@ -43,7 +43,7 @@ fn main() {
         .add_rigid_body(rb_1)
         .add_constraint(pendulum_0)
         .build();
-*/
+
 /*
     let points_0 = vec![
         Point2::new(-5.5, 4.5),
@@ -96,21 +96,21 @@ fn main() {
         .add_constraint(pendulum_2)
         .build();
 */
-
+/*
     let points_0 = vec![
-        Point2::new(-0.5, 1.5),
-        Point2::new(0.5, 1.5),
-        Point2::new(0.5, 2.5),
-        Point2::new(-0.5, 2.5)
+        Point2::new(-1.001, 1.5),
+        Point2::new(-0.001, 1.5),
+        Point2::new(-0.001, 2.5),
+        Point2::new(-1.001, 2.5)
     ];
     let polygon_0 = ConvexPolygon::from_convex_polyline(points_0).unwrap();
     let rb_0 = RigidBody::new(polygon_0, 1.0);
 
     let points_2 = vec![
-        Point2::new(-0.5, 5.5),
-        Point2::new(0.5, 5.5),
-        Point2::new(0.5, 6.5),
-        Point2::new(-0.5, 6.5)
+        Point2::new(-1.3, 82.5),
+        Point2::new(-0.3, 82.5),
+        Point2::new(-0.3, 83.5),
+        Point2::new(-1.3, 83.5)
     ];
     let polygon_2 = ConvexPolygon::from_convex_polyline(points_2).unwrap();
     let rb_2 = RigidBody::new(polygon_2, 1.0);
@@ -129,7 +129,7 @@ fn main() {
         .add_rigid_body(rb_1)
         .add_rigid_body(rb_2)
         .build();
-
+*/
 /*
     let points_0 = vec![
         Point2::new(-5.5, 5.5),
@@ -171,7 +171,7 @@ fn simulation_loop(mut solver: Solver) {
         if let Some(Button::Keyboard(Key::Space)) = event.press_args() {
             debug = !debug;
         }
-        if !debug {
+        if !debug || true {
             debug = solver.simulate();
         }
         window.draw_2d(&event, |context, graphics, _device| {

@@ -6,7 +6,7 @@ use piston_window::math::Scalar;
 use piston_window::{Context, Graphics, rectangle};
 use crate::rigid_body::{RigidBody, RigidBodyState};
 use crate::solver::Index;
-use crate::utils::{COLLISION_EPS, CONTACT_VELOCITY_EPS};
+use crate::utils::{COLLISION_EPS, CONTACT_VELOCITY_EPS, KINETIC_FRICTION, RESTITUTION_COEFFICIENT, STATIC_FRICTION};
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum CollisionType {
@@ -44,20 +44,92 @@ impl Collision {
         }
     }
 
-    pub fn get_restitution_coefficient(&self) -> Real {
-        0.5
+    pub fn get_reaction_restitution_coefficient(&self, rigid_bodies: &Vec<RigidBody>, friction: bool, lagrangian: Option<&Real>, dt: Real) -> Real {
+        if !friction {
+            0.0
+        }
+        else {
+            let lagrangian = *lagrangian.unwrap_or(&0.0);
+            let direct_orthogonal = Rotation2::new(FRAC_PI_2);
+            let rigid_body_1 = &rigid_bodies[self.index_1];
+            let rigid_body_2 = &rigid_bodies[self.index_2];
+
+            let orthogonal_point_1: Vector2<Real> = direct_orthogonal * self.point_1;
+            let orthogonal_point_2: Vector2<Real> = direct_orthogonal * self.point_2;
+            let velocity_1: Vector2<Real> = rigid_body_1.velocity.xy() + rigid_body_1.velocity.z * orthogonal_point_1;
+            let velocity_2: Vector2<Real> = rigid_body_2.velocity.xy() + rigid_body_2.velocity.z * orthogonal_point_2;
+            let relative_velocity_21: Vector2<Real> = velocity_2 - velocity_1;
+
+            let tangent: Vector2<Real> = direct_orthogonal * self.normal_12;
+            let tangential_velocity = relative_velocity_21.dot(&tangent).abs();
+
+            let mass_term = rigid_body_1.inv_mass.x + rigid_body_2.inv_mass.x;
+            let rotation_term_1 = orthogonal_point_1.dot(&tangent).powi(2) * rigid_body_1.inv_mass.z;
+            let rotation_term_2 = orthogonal_point_2.dot(&tangent).powi(2) * rigid_body_2.inv_mass.z;
+            let final_mass_term = mass_term + rotation_term_1 + rotation_term_2;
+
+            if tangential_velocity < STATIC_FRICTION * lagrangian * dt * final_mass_term {
+                return 0.0;
+            }
+
+            (tangential_velocity - KINETIC_FRICTION * lagrangian * dt * final_mass_term) / tangential_velocity
+        }
     }
 
-    pub fn compute_jacobian(&self, rigid_bodies: &Vec<RigidBody>) -> RowDVector<Real> {
+    pub fn get_impulse_restitution_coefficient(&self, rigid_bodies: &Vec<RigidBody>, friction: bool, lagrangian: Option<&Real>) -> Real {
+        if !friction {
+            RESTITUTION_COEFFICIENT
+        }
+        else {
+            let lagrangian = *lagrangian.unwrap_or(&0.0);
+            let direct_orthogonal = Rotation2::new(FRAC_PI_2);
+            let rigid_body_1 = &rigid_bodies[self.index_1];
+            let rigid_body_2 = &rigid_bodies[self.index_2];
+
+            let orthogonal_point_1: Vector2<Real> = direct_orthogonal * self.point_1;
+            let orthogonal_point_2: Vector2<Real> = direct_orthogonal * self.point_2;
+            let velocity_1: Vector2<Real> = rigid_body_1.velocity.xy() + rigid_body_1.velocity.z * orthogonal_point_1;
+            let velocity_2: Vector2<Real> = rigid_body_2.velocity.xy() + rigid_body_2.velocity.z * orthogonal_point_2;
+            let relative_velocity_21: Vector2<Real> = velocity_2 - velocity_1;
+
+            let tangent: Vector2<Real> = direct_orthogonal * self.normal_12;
+            let tangential_velocity = relative_velocity_21.dot(&tangent).abs();
+
+            let mass_term = rigid_body_1.inv_mass.x + rigid_body_2.inv_mass.x;
+            let rotation_term_1 = orthogonal_point_1.dot(&tangent).powi(2) * rigid_body_1.inv_mass.z;
+            let rotation_term_2 = orthogonal_point_2.dot(&tangent).powi(2) * rigid_body_2.inv_mass.z;
+            let final_mass_term = mass_term + rotation_term_1 + rotation_term_2;
+
+            if tangential_velocity < STATIC_FRICTION * lagrangian * final_mass_term {
+                return 0.0;
+            }
+
+            -(tangential_velocity - KINETIC_FRICTION * lagrangian * final_mass_term) / tangential_velocity
+        }
+    }
+
+    pub fn compute_jacobian(&self, rigid_bodies: &Vec<RigidBody>, friction: bool) -> RowDVector<Real> {
         let mut row = RowDVector::from(vec![0.0; 3 * rigid_bodies.len()]);
         let direct_orthogonal = Rotation2::new(FRAC_PI_2);
-        row[3 * self.index_1] = -self.normal_12.x;
-        row[3 * self.index_1 + 1] = -self.normal_12.y;
-        row[3 * self.index_1 + 2] = -(direct_orthogonal * self.point_1).dot(&self.normal_12);
+        if !friction {
+            row[3 * self.index_1] = -self.normal_12.x;
+            row[3 * self.index_1 + 1] = -self.normal_12.y;
+            row[3 * self.index_1 + 2] = -(direct_orthogonal * self.point_1).dot(&self.normal_12);
 
-        row[3 * self.index_2] = self.normal_12.x;
-        row[3 * self.index_2 + 1] = self.normal_12.y;
-        row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&self.normal_12);
+            row[3 * self.index_2] = self.normal_12.x;
+            row[3 * self.index_2 + 1] = self.normal_12.y;
+            row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&self.normal_12);
+        }
+        else {
+            let tangent: Vector2<Real> = direct_orthogonal * self.normal_12;
+            row[3 * self.index_1] = -tangent.x;
+            row[3 * self.index_1 + 1] = -tangent.y;
+            row[3 * self.index_1 + 2] = -(direct_orthogonal * self.point_1).dot(&tangent);
+
+            row[3 * self.index_2] = tangent.x;
+            row[3 * self.index_2 + 1] = tangent.y;
+            row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&tangent);
+        }
 
         row
     }
@@ -92,7 +164,7 @@ impl Collision {
         let color = match self.kind {
             CollisionType::Penetration => [1.0, 0.0, 1.0, 0.5],
             CollisionType::Separation => [0.0, 1.0, 0.0, 0.5],
-            CollisionType::Contact => [0.0, 0.0, 1.0, 0.5],
+            CollisionType::Contact  => [0.0, 0.0, 1.0, 0.5],
         };
         let point = Vector2::new(
             width as Real / 2.0 + (rigid_body.position.x + self.point_2.x) * 100.0,
@@ -176,4 +248,33 @@ fn find_deepest_contacts(contact: &ContactManifold<(), ()>) -> Vec<&TrackedConta
     }
 
     result
+}
+
+pub fn compute_friction_contacts(contacts: Vec<Collision>, lagrangians: &Vec<Real>) -> (Vec<Collision>, Vec<Real>) {
+    if contacts.len() == 0 { return (vec![], vec![]) }
+    let mut friction_contacts = vec![contacts[0].clone()];
+    let mut friction_lagrangians = vec![lagrangians[0]];
+    for i in 1..contacts.len() {
+        if contacts[i - 1].index_1 == contacts[i].index_1 && contacts[i - 1].index_2 == contacts[i - 1].index_2 && contacts[i - 1].kind == contacts[i - 1].kind {
+            friction_contacts.pop();
+            let friction_contact = Collision {
+                kind: contacts[i].kind.clone(),
+                index_1: contacts[i].index_1,
+                index_2: contacts[i].index_2,
+                point_1: (contacts[i - 1].point_1 + contacts[i].point_1) / 2.0,
+                point_2: (contacts[i - 1].point_2 + contacts[i].point_2) / 2.0,
+                normal_12: contacts[i].normal_12,
+            };
+            friction_contacts.push(friction_contact);
+
+            friction_lagrangians.pop();
+            friction_lagrangians.push(lagrangians[i - 1] + lagrangians[i]);
+        }
+        else {
+            friction_contacts.push(contacts[i].clone());
+            friction_lagrangians.push(lagrangians[i]);
+        }
+    }
+
+    (friction_contacts, friction_lagrangians)
 }
