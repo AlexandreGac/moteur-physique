@@ -2,6 +2,7 @@ use std::f64::consts::FRAC_PI_2;
 use nalgebra::{RowDVector, Vector2, Rotation2};
 use parry2d_f64::math::Real;
 use parry2d_f64::query::{ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher, TrackedContact};
+use parry2d_f64::shape::{FeatureId, ShapeType};
 use piston_window::math::Scalar;
 use piston_window::{Context, Graphics, rectangle};
 use crate::rigid_body::{RigidBody, RigidBodyState};
@@ -13,6 +14,11 @@ pub enum CollisionType {
     Penetration, Separation, Contact
 }
 
+#[derive(PartialEq, Clone, Debug)]
+pub enum ContactType {
+    Vertex, Edge, Curve
+}
+
 #[derive(Clone, Debug)]
 pub struct Collision {
     pub kind: CollisionType,
@@ -20,6 +26,8 @@ pub struct Collision {
     pub index_2: Index,
     pub point_1: Vector2<Real>,
     pub point_2: Vector2<Real>,
+    pub type_1: ContactType,
+    pub type_2: ContactType,
     pub normal_12: Vector2<Real>
 }
 
@@ -110,25 +118,39 @@ impl Collision {
 
     pub fn compute_jacobian(&self, rigid_bodies: &Vec<RigidBody>, friction: bool) -> RowDVector<Real> {
         let mut row = RowDVector::from(vec![0.0; 3 * rigid_bodies.len()]);
+        let position_1 = rigid_bodies[self.index_1].position.xy();
+        let position_2 = rigid_bodies[self.index_2].position.xy();
         let direct_orthogonal = Rotation2::new(FRAC_PI_2);
+        let tangent = direct_orthogonal * self.normal_12;
         if !friction {
             row[3 * self.index_1] = -self.normal_12.x;
             row[3 * self.index_1 + 1] = -self.normal_12.y;
-            row[3 * self.index_1 + 2] = -(direct_orthogonal * self.point_1).dot(&self.normal_12);
+            match self.type_1 {
+                ContactType::Edge => row[3 * self.index_1 + 2] = (position_2 + self.point_2 - position_1).dot(&tangent),
+                _ => row[3 * self.index_1 + 2] = -(direct_orthogonal * self.point_1).dot(&self.normal_12)
+            }
 
             row[3 * self.index_2] = self.normal_12.x;
             row[3 * self.index_2 + 1] = self.normal_12.y;
-            row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&self.normal_12);
+            match self.type_2 {
+                ContactType::Edge => row[3 * self.index_2 + 2] = -(position_1 + self.point_1 - position_2).dot(&tangent),
+                _ => row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&self.normal_12)
+            }
         }
         else {
-            let tangent: Vector2<Real> = direct_orthogonal * self.normal_12;
             row[3 * self.index_1] = -tangent.x;
             row[3 * self.index_1 + 1] = -tangent.y;
-            row[3 * self.index_1 + 2] = -(direct_orthogonal * self.point_1).dot(&tangent);
+            match self.type_1 {
+                ContactType::Edge => row[3 * self.index_1 + 2] = -(position_2 + self.point_2 - position_1).dot(&self.normal_12),
+                _ => row[3 * self.index_1 + 2] = -(direct_orthogonal * self.point_1).dot(&tangent)
+            }
 
             row[3 * self.index_2] = tangent.x;
             row[3 * self.index_2 + 1] = tangent.y;
-            row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&tangent);
+            match self.type_2 {
+                ContactType::Edge => row[3 * self.index_2 + 2] = (position_1 + self.point_1 - position_2).dot(&self.normal_12),
+                _ => row[3 * self.index_2 + 2] = (direct_orthogonal * self.point_2).dot(&tangent),
+            }
         }
 
         row
@@ -136,8 +158,23 @@ impl Collision {
 
     pub fn compute_jacobian_derivative(&self, states: &Vec<RigidBodyState>) -> RowDVector<Real> {
         let mut row = RowDVector::from(vec![0.0; 3 * states.len()]);
-        row[3 * self.index_1 + 2] = states[self.index_1].velocity.z * self.point_1.dot(&self.normal_12);
-        row[3 * self.index_2 + 2] = -states[self.index_2].velocity.z * self.point_2.dot(&self.normal_12);
+        let position_1 = states[self.index_1].position.xy();
+        let position_2 = states[self.index_2].position.xy();
+        let velocity_1 = states[self.index_1].velocity.xy();
+        let velocity_2 = states[self.index_2].velocity.xy();
+        let direct_orthogonal = Rotation2::new(FRAC_PI_2);
+        let tangent = direct_orthogonal * self.normal_12;
+        match self.type_1 {
+            ContactType::Vertex => row[3 * self.index_1 + 2] = states[self.index_1].velocity.z * self.point_1.dot(&self.normal_12),
+            ContactType::Edge => row[3 * self.index_1 + 2] = 2.0 * (velocity_2 + states[self.index_2].velocity.z * (direct_orthogonal * self.point_2) - velocity_1).dot(&tangent) - states[self.index_1].velocity.z * (position_2 + self.point_2 - position_1).dot(&self.normal_12),
+            ContactType::Curve => row[3 * self.index_1 + 2] = 0.0
+        }
+
+        match self.type_2 {
+            ContactType::Vertex => row[3 * self.index_2 + 2] = -states[self.index_2].velocity.z * self.point_2.dot(&self.normal_12),
+            ContactType::Edge => row[3 * self.index_2 + 2] = -2.0 * (velocity_1 + states[self.index_1].velocity.z * (direct_orthogonal * self.point_1) - velocity_2).dot(&tangent) + states[self.index_2].velocity.z * (position_1 + self.point_1 - position_2).dot(&self.normal_12),
+            ContactType::Curve => row[3 * self.index_2 + 2] = 0.0
+        }
 
         row
     }
@@ -209,16 +246,31 @@ pub fn compute_contact(index_1: Index, index_2: Index, rigid_bodies: &Vec<RigidB
         let velocity_2: Vector2<Real> = rigid_body_2.velocity.xy() + rigid_body_2.velocity.z * (direct_orthogonal * point_2);
 
         let relative_velocity_21 = (velocity_2 - velocity_1).dot(&normal_12);
-        let kind;
-        if relative_velocity_21.abs() < CONTACT_VELOCITY_EPS {
-            kind = CollisionType::Contact;
+        let kind = if relative_velocity_21.abs() < CONTACT_VELOCITY_EPS {
+            CollisionType::Contact
         }
         else if relative_velocity_21 < 0.0 {
-            kind = CollisionType::Penetration;
+            CollisionType::Penetration
         }
         else {
-            kind = CollisionType::Separation;
-        }
+            CollisionType::Separation
+        };
+
+        let type_1 = match tracked_contact.fid1.unpack() {
+            FeatureId::Vertex(_) => ContactType::Vertex,
+            FeatureId::Face(_) => if rigid_body_1.shape().shape_type() == ShapeType::Ball {
+                ContactType::Curve
+            } else { ContactType::Edge }
+            _ => panic!("Type inconnu de collision !")
+        };
+
+        let type_2 = match tracked_contact.fid2.unpack() {
+            FeatureId::Vertex(_) => ContactType::Vertex,
+            FeatureId::Face(_) => if rigid_body_2.shape().shape_type() == ShapeType::Ball {
+                ContactType::Curve
+            } else { ContactType::Edge }
+            _ => panic!("Type inconnu de collision !")
+        };
 
         Collision {
             kind,
@@ -226,6 +278,8 @@ pub fn compute_contact(index_1: Index, index_2: Index, rigid_bodies: &Vec<RigidB
             index_2,
             point_1,
             point_2,
+            type_1,
+            type_2,
             normal_12
         }
     }).collect()
@@ -263,7 +317,9 @@ pub fn compute_friction_contacts(contacts: Vec<Collision>, lagrangians: &Vec<Rea
                 index_2: contacts[i].index_2,
                 point_1: (contacts[i - 1].point_1 + contacts[i].point_1) / 2.0,
                 point_2: (contacts[i - 1].point_2 + contacts[i].point_2) / 2.0,
-                normal_12: contacts[i].normal_12,
+                type_1: contacts[i].type_1.clone(),
+                type_2: contacts[i].type_2.clone(),
+                normal_12: contacts[i].normal_12
             };
             friction_contacts.push(friction_contact);
 

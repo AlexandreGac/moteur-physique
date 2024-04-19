@@ -1,7 +1,7 @@
 use crate::collision;
 use crate::collision::{Collision, CollisionType};
 use crate::rigid_body::{RigidBody, RigidBodyState};
-use nalgebra::{DMatrix, DVector, Vector3};
+use nalgebra::{DMatrix, DVector, Vector2, Vector3};
 use parry2d_f64::math::Real;
 use piston_window::{Context, Graphics};
 use piston_window::math::Scalar;
@@ -23,6 +23,7 @@ impl Solver {
     pub fn simulate(&mut self) -> bool {
         let mut collisions = self.find_collisions();
         self.collision_infos = collisions.clone();
+
         let mut stop = false;
         loop {
             let contacts = collisions.iter().cloned()

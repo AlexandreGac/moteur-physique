@@ -1,9 +1,9 @@
-use nalgebra::{Isometry2, Point2, Vector3};
+use nalgebra::{Isometry2, Point2, Rotation2, Vector2, Vector3};
 use parry2d_f64::shape::{Shape, ShapeType};
 use parry2d_f64::mass_properties::MassProperties;
 use parry2d_f64::math::Real;
 use parry2d_f64::shape::ConvexPolygon;
-use piston_window::{Context, Graphics, polygon};
+use piston_window::{Context, ellipse, Graphics, line, polygon};
 use piston_window::math::Scalar;
 use crate::utils::GRAVITATIONAL_ACCELERATION;
 
@@ -18,14 +18,19 @@ pub struct RigidBody {
 impl RigidBody {
     pub fn new(shape: impl Shape, density: Real) -> Self {
         let mass_properties = shape.mass_properties(density);
-        let (polygon, transform) = center_shape(&shape, mass_properties);
+        let (new_shape, transform) = center_shape(&shape, mass_properties);
         RigidBody {
-            geometry: Box::new(polygon),
+            geometry: new_shape,
             position: Vector3::new(transform.translation.x, transform.translation.y, 0.0),
             velocity: Vector3::new(0.0, 0.0, 0.0),
             inv_mass: Vector3::new(mass_properties.inv_mass, mass_properties.inv_mass, mass_properties.inv_principal_inertia_sqrt),
             transform,
         }
+    }
+
+    pub fn set_transform(&mut self, transform: Isometry2<Real>) {
+        self.position = Vector3::new(transform.translation.x, transform.translation.y, transform.rotation.angle());
+        self.transform = transform;
     }
 
     pub fn get_state(&self) -> RigidBodyState {
@@ -65,24 +70,57 @@ impl RigidBody {
     }
 
     pub fn display(&self, context: Context, graphics: &mut impl Graphics, width: Scalar, height: Scalar) {
-        polygon(
-            [1.0, 0.0, 0.0, 0.5],
-            self.geometry
-                .as_convex_polygon()
-                .expect("Impossible de dessiner autre chose qu'un polygone !")
-                .points()
-                .iter()
-                .map(|v| self.transform * v)
-                .map(|v| [width / 2.0 + (v.x * 100.0) as Scalar, height - (v.y * 100.0) as Scalar])
-                .collect::<Vec<_>>()
-                .as_slice(),
-            context.transform,
-            graphics
-        );
+        match self.geometry.shape_type() {
+            ShapeType::ConvexPolygon => {
+                polygon(
+                    [1.0, 0.0, 0.0, 0.5],
+                    self.geometry
+                        .as_convex_polygon()
+                        .expect("Erreur forme !")
+                        .points()
+                        .iter()
+                        .map(|v| self.transform * v)
+                        .map(|v| [width / 2.0 + (v.x * 100.0) as Scalar, height - (v.y * 100.0) as Scalar])
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    context.transform,
+                    graphics
+                );
+            }
+            ShapeType::Ball => {
+                let ball = self.geometry.as_ball().expect("Erreur forme !");
+                ellipse(
+                    [1.0, 0.0, 0.0, 0.5],
+                    [
+                        width / 2.0 + ((self.position.x - ball.radius) * 100.0) as Scalar,
+                        height - ((self.position.y + ball.radius) * 100.0) as Scalar,
+                        (200.0 * ball.radius) as Scalar,
+                        (200.0 * ball.radius) as Scalar
+                    ],
+                    context.transform,
+                    graphics
+                );
+                let rotation = Rotation2::new(self.position.z);
+                let point_1: Vector2<Real> = self.position.xy();
+                let point_2: Vector2<Real> = self.position.xy() + rotation * Vector2::<Real>::new(ball.radius, 0.0);
+                line([1.0, 1.0, 1.0, 1.0],
+                     1.0,
+                     [
+                         width / 2.0 + (point_1.x * 100.0) as Scalar,
+                         height - (point_1.y * 100.0) as Scalar,
+                         width / 2.0 + (point_2.x * 100.0) as Scalar,
+                         height - (point_2.y * 100.0) as Scalar,
+                     ],
+                     context.transform,
+                     graphics
+                );
+            }
+            _ => panic!("Géométrie non gérée !")
+        }
     }
 }
 
-fn center_shape(shape: &dyn Shape, mass_properties: MassProperties) -> (impl Shape, Isometry2<Real>) {
+fn center_shape(shape: &dyn Shape, mass_properties: MassProperties) -> (Box<dyn Shape>, Isometry2<Real>) {
     match shape.shape_type() {
         ShapeType::ConvexPolygon => {
             let convex_polygon = shape.as_convex_polygon().unwrap();
@@ -90,7 +128,10 @@ fn center_shape(shape: &dyn Shape, mass_properties: MassProperties) -> (impl Sha
             let points = convex_polygon.points().iter().map(|p| p - center).collect();
             let polygon = ConvexPolygon::from_convex_polyline(points).expect("Polygone non convexe !");
             let transform = Isometry2::translation(center.x, center.y);
-            (polygon, transform)
+            (Box::new(polygon), transform)
+        },
+        ShapeType::Ball => {
+            (shape.clone_box(), Isometry2::identity())
         },
         _ => panic!("Géométrie non gérée !")
     }
