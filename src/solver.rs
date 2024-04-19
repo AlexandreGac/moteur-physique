@@ -40,17 +40,17 @@ impl Solver {
                 }
             }
 
-            if penetrations.is_empty() { break }
-
             let impulses = self.compute_impulses(&vec![], &mut penetrations, false);
-            for i in 0..self.world.len() {
+            for i in 0..impulses.len() {
                 self.world[i].apply_impulse(impulses[i]);
             }
+
+            if penetrations.is_empty() { break }
 
             let (mut friction_penetrations, friction_lagrangians) = collision::compute_friction_contacts(penetrations, &self.penetration_lagrangians);
             self.penetration_lagrangians = friction_lagrangians;
             let friction_impulses = self.compute_impulses(&vec![], &mut friction_penetrations, true);
-            for i in 0..self.world.len() {
+            for i in 0..friction_impulses.len() {
                 self.world[i].apply_impulse(friction_impulses[i]);
             }
 
@@ -70,7 +70,7 @@ impl Solver {
             let (friction_contacts, friction_lagrangians) = collision::compute_friction_contacts(contacts, &self.contact_lagrangians);
             self.contact_lagrangians = friction_lagrangians;
             let friction_impulses = self.compute_impulses(&friction_contacts, &mut vec![], true);
-            for i in 0..self.world.len() {
+            for i in 0..friction_impulses.len() {
                 self.world[i].apply_impulse(friction_impulses[i]);
             }
         }
@@ -140,6 +140,8 @@ impl Solver {
     fn compute_impulses(&mut self, contacts: &Vec<Collision>, penetrations: &mut Vec<Collision>, friction: bool) -> Vec<Vector3<Real>> {
         let states: Vec<RigidBodyState> = self.world.iter().map(|x| x.get_state()).collect();
         loop {
+            if contacts.len() == 0 && penetrations.len() == 0 { return vec![] }
+
             let velocities: DVector<Real> = DVector::<Real>::from(
                 self.world.iter()
                     .map(|x| x.velocity.iter().cloned())

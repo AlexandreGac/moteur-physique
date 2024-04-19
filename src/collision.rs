@@ -6,7 +6,7 @@ use piston_window::math::Scalar;
 use piston_window::{Context, Graphics, rectangle};
 use crate::rigid_body::{RigidBody, RigidBodyState};
 use crate::solver::Index;
-use crate::utils::{COLLISION_EPS, CONTACT_VELOCITY_EPS, KINETIC_FRICTION, RESTITUTION_COEFFICIENT, STATIC_FRICTION};
+use crate::utils::{COLLISION_EPS, COLLISION_PREDICTION, CONTACT_VELOCITY_EPS, KINETIC_FRICTION, RESTITUTION_COEFFICIENT, STATIC_FRICTION};
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum CollisionType {
@@ -188,7 +188,7 @@ pub fn compute_contact(index_1: Index, index_2: Index, rigid_bodies: &Vec<RigidB
         &transform,
         rigid_body_1.shape(),
         rigid_body_2.shape(),
-        0.0,
+        COLLISION_PREDICTION,
         &mut manifolds,
         &mut None
     ).expect("Collision non gérée !");

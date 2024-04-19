@@ -83,7 +83,7 @@ impl Constraint {
                     graphics
                 );
 
-                line([0.0, 0.0, 1.0, 1.0],
+                line([0.7, 0.7, 0.7, 1.0],
                      2.0,
                      [point_1.x as Scalar, point_1.y as Scalar, point_2.x as Scalar, point_2.y as Scalar],
                      context.transform,
