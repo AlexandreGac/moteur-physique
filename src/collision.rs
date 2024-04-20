@@ -77,9 +77,11 @@ impl Collision {
             let final_mass_term = mass_term + rotation_term_1 + rotation_term_2;
 
             if tangential_velocity < STATIC_FRICTION * lagrangian * dt * final_mass_term {
+                println!("% of restitution : {}", 0.0);
                 return 0.0;
             }
 
+            println!("% of restitution : {}", (tangential_velocity - KINETIC_FRICTION * lagrangian * dt * final_mass_term) / tangential_velocity);
             (tangential_velocity - KINETIC_FRICTION * lagrangian * dt * final_mass_term) / tangential_velocity
         }
     }
@@ -164,6 +166,60 @@ impl Collision {
         let velocity_2 = states[self.index_2].velocity.xy();
         let direct_orthogonal = Rotation2::new(FRAC_PI_2);
         let tangent = direct_orthogonal * self.normal_12;
+
+        if self.type_1 == ContactType::Edge {
+            row[3 * self.index_1] = -states[self.index_1].velocity.z * tangent.x;
+            row[3 * self.index_1 + 1] = -states[self.index_1].velocity.z * tangent.y;
+            row[3 * self.index_2] = states[self.index_1].velocity.z * tangent.x;
+            row[3 * self.index_2 + 1] = states[self.index_1].velocity.z * tangent.y;
+            match self.type_2 {
+                ContactType::Vertex => {
+                    row[3 * self.index_1 + 2] = (velocity_2 + states[self.index_2].velocity.z * (direct_orthogonal * self.point_2) - velocity_1).dot(&tangent) - states[self.index_1].velocity.z * (position_2 + self.point_2 - position_1).dot(&self.normal_12);
+                    row[3 * self.index_2 + 2] = (states[self.index_1].velocity.z - states[self.index_2].velocity.z) * self.point_2.dot(&self.normal_12);
+                },
+                ContactType::Curve => {
+                    row[3 * self.index_1 + 2] = (velocity_2 - velocity_1).dot(&tangent) - states[self.index_1].velocity.z * (position_2 - position_1).dot(&self.normal_12);
+                },
+                ContactType::Edge => panic!("Collision Arête - Arête impossible !")
+            }
+        }
+        else if self.type_2 == ContactType::Edge {
+            row[3 * self.index_1] = states[self.index_2].velocity.z * tangent.x;
+            row[3 * self.index_1 + 1] = states[self.index_2].velocity.z * tangent.y;
+            row[3 * self.index_2] = -states[self.index_2].velocity.z * tangent.x;
+            row[3 * self.index_2 + 1] = -states[self.index_2].velocity.z * tangent.y;
+            match self.type_1 {
+                ContactType::Vertex => {
+                    row[3 * self.index_1 + 2] = -(velocity_1 + states[self.index_1].velocity.z * (direct_orthogonal * self.point_1) - velocity_2).dot(&tangent) + states[self.index_2].velocity.z * (position_1 + self.point_1 - position_2).dot(&self.normal_12);
+                    row[3 * self.index_2 + 2] = -(states[self.index_2].velocity.z - states[self.index_1].velocity.z) * self.point_1.dot(&self.normal_12);
+                },
+                ContactType::Curve => {
+                    row[3 * self.index_1 + 2] = -(velocity_1 - velocity_2).dot(&tangent) + states[self.index_2].velocity.z * (position_1 - position_2).dot(&self.normal_12);
+                },
+                ContactType::Edge => panic!("Collision Arête - Arête impossible !")
+            }
+        }
+        else if self.type_1 == ContactType::Curve {
+            match self.type_2 {
+                ContactType::Vertex => {
+                    row[3 * self.index_2 + 2] = -states[self.index_2].velocity.z * self.point_2.dot(&self.normal_12);
+                },
+                ContactType::Curve => {},
+                ContactType::Edge => panic!("Impossible !")
+            }
+        }
+        else if self.type_2 == ContactType::Curve {
+            match self.type_1 {
+                ContactType::Vertex => {
+                    row[3 * self.index_1 + 2] = states[self.index_1].velocity.z * self.point_1.dot(&self.normal_12);
+                },
+                ContactType::Curve | ContactType::Edge => panic!("Impossible !")
+            }
+        }
+        else {
+            panic!("Collision Sommet - Sommet impossible !");
+        }
+
         match self.type_1 {
             ContactType::Vertex => row[3 * self.index_1 + 2] = states[self.index_1].velocity.z * self.point_1.dot(&self.normal_12),
             ContactType::Edge => row[3 * self.index_1 + 2] = 2.0 * (velocity_2 + states[self.index_2].velocity.z * (direct_orthogonal * self.point_2) - velocity_1).dot(&tangent) - states[self.index_1].velocity.z * (position_2 + self.point_2 - position_1).dot(&self.normal_12),
@@ -309,7 +365,7 @@ pub fn compute_friction_contacts(contacts: Vec<Collision>, lagrangians: &Vec<Rea
     let mut friction_contacts = vec![contacts[0].clone()];
     let mut friction_lagrangians = vec![lagrangians[0]];
     for i in 1..contacts.len() {
-        if contacts[i - 1].index_1 == contacts[i].index_1 && contacts[i - 1].index_2 == contacts[i - 1].index_2 && contacts[i - 1].kind == contacts[i - 1].kind {
+        if contacts[i - 1].index_1 == contacts[i].index_1 && contacts[i - 1].index_2 == contacts[i].index_2 && contacts[i - 1].kind == contacts[i].kind {
             friction_contacts.pop();
             let friction_contact = Collision {
                 kind: contacts[i].kind.clone(),
