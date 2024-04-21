@@ -77,11 +77,9 @@ impl Collision {
             let final_mass_term = mass_term + rotation_term_1 + rotation_term_2;
 
             if tangential_velocity < STATIC_FRICTION * lagrangian * dt * final_mass_term {
-                println!("% of restitution : {}", 0.0);
                 return 0.0;
             }
 
-            println!("% of restitution : {}", (tangential_velocity - KINETIC_FRICTION * lagrangian * dt * final_mass_term) / tangential_velocity);
             (tangential_velocity - KINETIC_FRICTION * lagrangian * dt * final_mass_term) / tangential_velocity
         }
     }

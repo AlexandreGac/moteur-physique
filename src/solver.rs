@@ -259,8 +259,7 @@ impl Solver {
         );
 
         let a = jacobian.clone() * &self.inverse_mass * jacobian.transpose();
-        let b = -jacobian_derivative * velocities
-            - jacobian.clone() * &self.inverse_mass * external_forces;
+        let b = -jacobian_derivative * velocities - jacobian.clone() * &self.inverse_mass * external_forces;
         let lagrangian = a.svd(true, true).solve(&b, 1e-15).expect("La résolution a échoué !");
 
         let mut restart = false;
