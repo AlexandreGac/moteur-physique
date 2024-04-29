@@ -15,13 +15,13 @@ use piston_window::math::Scalar;
 use crate::constraints::Constraint;
 
 fn main() {
-
+/*
     let shape_0 = shape::Ball::new(0.2);
     let mut rb_0 = RigidBody::new(shape_0, 1.0);
     rb_0.set_transform(Isometry2::translation(-2.0, 6.0));
     let pendulum_0 = Constraint::create_distance_constraint(
         0,
-        Vector2::new(0.0, 0.0),
+        Vector2::new(0.2, 0.0),
         Vector2::new(0.0, 6.0)
     );
 
@@ -31,8 +31,8 @@ fn main() {
     let pendulum_1 = Constraint::create_link_constraint(
         0,
         1,
-        Vector2::new(0.0, 0.0),
-        Vector2::new(0.0, 0.0)
+        Vector2::new(-0.2, 0.0),
+        Vector2::new(0.2, 0.0)
     );
 
     let shape_2 = shape::Ball::new(0.2);
@@ -41,8 +41,8 @@ fn main() {
     let pendulum_2 = Constraint::create_link_constraint(
         1,
         2,
-        Vector2::new(0.0, 0.0),
-        Vector2::new(0.0, 0.0)
+        Vector2::new(-0.2, 0.0),
+        Vector2::new(0.2, 0.0)
     );
 
     let points_3 = vec![
@@ -58,12 +58,12 @@ fn main() {
         .add_rigid_body(rb_0)
         .add_rigid_body(rb_1)
         .add_rigid_body(rb_2)
-        .add_rigid_body(rb_3)
+        //.add_rigid_body(rb_3)
         .add_constraint(pendulum_0)
         .add_constraint(pendulum_1)
         .add_constraint(pendulum_2)
         .build();
-
+*/
 /*
     let shape_0 = shape::Ball::new(0.5);
     let mut rb_0 = RigidBody::new(shape_0, 1.0);
@@ -169,7 +169,7 @@ fn main() {
         .add_rigid_body(rb_2)
         .build();
 */
-/*
+
     let mut rb_2 = RigidBody::new(shape::Ball::new(0.5), 1.0);
     rb_2.set_transform(Isometry2::translation(-5.0, 10.0));
 
@@ -186,7 +186,7 @@ fn main() {
         Point2::new(-5.5, 0.5),
         Point2::new(5.5, 0.5),
         Point2::new(5.5, 1.5),
-        Point2::new(-5.5, 2.5)
+        Point2::new(-5.5, 2.99)
     ];
     let polygon_1 = ConvexPolygon::from_convex_polyline(points_1).unwrap();
     let rb_1 = RigidBody::new(polygon_1, Real::INFINITY);
@@ -196,7 +196,7 @@ fn main() {
         .add_rigid_body(rb_1)
         .add_rigid_body(rb_2)
         .build();
-*/
+
 /*
     let mut rb_0 = RigidBody::new(shape::Ball::new(0.5), 1.0);
     rb_0.set_transform(Isometry2::translation(-5.0, 6.0));
